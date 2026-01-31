@@ -7,6 +7,7 @@ import threading
 import time
 import logging
 import numpy as np
+import webbrowser
 
 # --- SILENCE FLASK LOGS ---
 # log = logging.getLogger('werkzeug')
@@ -42,12 +43,18 @@ def calculate_angle(a, b, c):
 
 def main():
     global stats
-    print("Starting AI Engine...")
 
     # Start Flask in a background thread
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
     print("Server started on http://127.0.0.1:5001")
+
+
+    print("Launching Instagram Reels...")
+    webbrowser.open("https://www.instagram.com/reels/")
+
+    # Give the browser a second to load before starting the thread
+    time.sleep(2)
 
     # Initialize AI (On Main Thread)
     mp_pose = mp.solutions.pose
