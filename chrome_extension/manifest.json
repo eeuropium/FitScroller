@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Push-up HUD Display",
+  "version": "1.0",
+  "action": {
+    "default_title": "Push-up HUD is Active"
+  },
+  "content_scripts": [{
+    "matches": ["*://www.instagram.com/reels/*"],
+    "js": ["content.js"],
+    "css": ["style.css"]
+  }]
+}
