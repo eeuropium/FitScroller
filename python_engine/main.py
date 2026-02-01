@@ -10,12 +10,41 @@ import numpy as np
 import webbrowser
 
 # --- SILENCE FLASK LOGS ---
-# log = logging.getLogger('werkzeug')
-# log.setLevel(logging.ERROR)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 CORS(app)
 stats = {"reps": 0, "time": "00:00"}
+
+# import like image for finding like coordinates
+
+import ctypes
+import platform
+
+def get_scale_factor():
+    """Detects the DPI scaling factor of the monitor."""
+    # 1. Get Logical Width (what the OS says)
+    logic_w, _ = pyautogui.size()
+
+    # 2. Get Physical Width (actual hardware pixels)
+    if platform.system() == "Windows":
+        # Force Windows to be DPI aware to get actual hardware metrics
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        phys_w = ctypes.windll.user32.GetSystemMetrics(0)
+    elif platform.system() == "Darwin": # macOS
+        # On Mac, locateOnScreen usually returns 2x coordinates on Retina
+        # We can test this by checking a screenshot's size
+        phys_w = pyautogui.screenshot().size[0]
+    else:
+        phys_w = logic_w # Default for Linux/others
+
+    return phys_w / logic_w
+
+# --- How to use it in your code ---
+SCALE = get_scale_factor()
+print(f"Detected Scale Factor: {SCALE}")
+
 
 @app.route('/stats')
 def get_stats():
@@ -41,6 +70,26 @@ def calculate_angle(a, b, c):
 
     return angle
 
+# for blinking detection
+def get_ear(landmarks, eye_indices): # EAR --> eye aspect ratio
+    """Calculates Eye Aspect Ratio (Simplified for 2 points)"""
+    # Vertical distance between upper and lower eyelid
+    p1 = landmarks[eye_indices[0]]
+    p2 = landmarks[eye_indices[1]]
+    dist = np.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+    return dist
+
+def find_like():
+    like_list = list(pyautogui.locateAllOnScreen('../assets/like.png', grayscale=True, confidence=0.5))
+    like_list = [box for box in like_list if (box.left / SCALE) > pyautogui.size()[0] // 2]
+
+    if len(like_list) > 0:
+        like_box = like_list[0]
+        like_loc = ((like_box.left + like_box.width // 2) // SCALE, (like_box.top + like_box.height // 2) // SCALE)
+    else:
+        like_loc = None
+
+    return like_loc
 def main():
     global stats
 
@@ -54,28 +103,67 @@ def main():
     webbrowser.open("https://www.instagram.com/reels/")
 
     # Give the browser a second to load before starting the thread
-    time.sleep(2)
+    time.sleep(5)
+
+    # find heart locationt o like reels later
+    like_location = pyautogui.locateCenterOnScreen('../assets/like.png', confidence=0.3)
+    can_like = bool(like_location) # if canLike = False, we will have no liking feature
+
 
     # Initialize AI (On Main Thread)
     mp_pose = mp.solutions.pose
     pose = mp_pose.Pose(min_detection_confidence=0.7)
+
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.7)
+
     cap = cv2.VideoCapture(0)
 
     counter = 0
     stage = None
+    blink_active = False # Debounce for blinking
     start_time = time.time()
 
+    # Face landmarks for left eye (Top: 159, Bottom: 145)
+    LEFT_EYE_TOP_BOTTOM = [159, 145]
+
+    # find heart location
+    like_loc = find_like()
+
+    print(like_loc)
+
     while cap.isOpened():
+        if like_loc is None: # try again
+            like_loc = find_like()
         # print("RNING")
+
         ret, frame = cap.read()
         if not ret:
             break
 
         # Get frame dimensions for pixel mapping
         h, w, _ = frame.shape
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Process frame
-        results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        face_results = face_mesh.process(rgb_frame) # for blink
+        results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) # for pushup
+
+        # 1. BLINK DETECTION (LIKE REEL)
+        if like_loc is not None and face_results.multi_face_landmarks:
+            for face_landmarks in face_results.multi_face_landmarks:
+                ear = get_ear(face_landmarks.landmark, LEFT_EYE_TOP_BOTTOM)
+
+                # Threshold for a blink (0.015 - 0.02 is typical)
+                print(ear)
+                if ear < 0.018:
+                    if not blink_active:
+                        print("Blink Detected! Liking...")
+                        # Double click center of screen to like
+                        pyautogui.click(like_loc)
+                        blink_active = True
+                else:
+                    blink_active = False
 
         if results.pose_landmarks:
             # --- START DRAWING SECTION ---
@@ -136,6 +224,26 @@ def main():
                 pyautogui.press('down')
                 stats["reps"] = counter
                 print(f"Rep: {counter}")
+
+        if face_results.multi_face_landmarks:
+            for face_landmarks in face_results.multi_face_landmarks:
+                # This draws the dots on the eyes and face
+                mp.solutions.drawing_utils.draw_landmarks(
+                    image=frame,
+                    landmark_list=face_landmarks,
+                    connections=mp_face_mesh.FACEMESH_TESSELATION,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=mp.solutions.drawing_utils.DrawingSpec(
+                        color=(255, 255, 255), thickness=1, circle_radius=1
+                    )
+                )
+
+                # OPTIONAL: Specifically highlight the two points used for EAR
+                # This helps you see if the logic is matching your actual eyes
+                for idx in LEFT_EYE_TOP_BOTTOM:
+                    eye_pt = face_landmarks.landmark[idx]
+                    pos = (int(eye_pt.x * w), int(eye_pt.y * h))
+                    cv2.circle(frame, pos, 3, (0, 255, 255), -1)
 
         # Update Timer
         elapsed = int(time.time() - start_time)
