@@ -8,6 +8,7 @@ import time
 import logging
 import numpy as np
 import webbrowser
+from collections import deque
 
 # --- SILENCE FLASK LOGS ---
 log = logging.getLogger('werkzeug')
@@ -50,6 +51,9 @@ print(f"Detected Scale Factor: {SCALE}")
 def get_stats():
     return jsonify(stats)
 
+def sgn(x):
+    return (x > 0) - (x < 0)
+
 # Function to run the server in the background
 def run_server():
     # Use port 5001 to avoid AirPlay conflict
@@ -71,13 +75,22 @@ def calculate_angle(a, b, c):
     return angle
 
 # for blinking detection
-def get_ear(landmarks, eye_indices): # EAR --> eye aspect ratio
-    """Calculates Eye Aspect Ratio (Simplified for 2 points)"""
-    # Vertical distance between upper and lower eyelid
-    p1 = landmarks[eye_indices[0]]
-    p2 = landmarks[eye_indices[1]]
-    dist = np.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
-    return dist
+def get_ear(landmarks, eye_indices):
+    """Calculates Normalized Eye Aspect Ratio (EAR)"""
+    # Vertical distance (Top to Bottom)
+    p1 = landmarks[eye_indices[0]] # Landmark 159
+    p2 = landmarks[eye_indices[1]] # Landmark 145
+    vertical_dist = np.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+
+    # Horizontal distance (Left corner to Right corner of eye)
+    # Using landmarks 33 and 133 for the left eye
+    h_left = landmarks[33]
+    h_right = landmarks[133]
+    horizontal_dist = np.sqrt((h_left.x - h_right.x)**2 + (h_left.y - h_right.y)**2)
+
+    # The Ratio: If this is < ~0.2, it's a blink, regardless of distance
+    ear = vertical_dist / horizontal_dist
+    return ear
 
 def find_like():
     like_list = list(pyautogui.locateAllOnScreen('../assets/like.png', grayscale=True, confidence=0.5))
@@ -90,6 +103,7 @@ def find_like():
         like_loc = None
 
     return like_loc
+
 def main():
     global stats
 
@@ -132,6 +146,10 @@ def main():
 
     print(like_loc)
 
+    BUFFER_LEN = 30
+    INIT_VAL = 0.5
+    buffer = deque(maxlen = BUFFER_LEN) # start empty
+
     while cap.isOpened():
         if like_loc is None: # try again
             like_loc = find_like()
@@ -149,21 +167,37 @@ def main():
         face_results = face_mesh.process(rgb_frame) # for blink
         results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) # for pushup
 
+
         # 1. BLINK DETECTION (LIKE REEL)
         if like_loc is not None and face_results.multi_face_landmarks:
             for face_landmarks in face_results.multi_face_landmarks:
                 ear = get_ear(face_landmarks.landmark, LEFT_EYE_TOP_BOTTOM)
 
+                buffer.append(ear)
+
                 # Threshold for a blink (0.015 - 0.02 is typical)
-                print(ear)
-                if ear < 0.018:
-                    if not blink_active:
-                        print("Blink Detected! Liking...")
-                        # Double click center of screen to like
-                        pyautogui.click(like_loc)
-                        blink_active = True
-                else:
-                    blink_active = False
+
+                if len(buffer) == BUFFER_LEN:
+                    diffs = [buffer[i] - buffer[i-1] for i in range(1, len(buffer))]
+
+                    avg_diff = np.mean(diffs)
+                    std_diff = np.std(diffs)
+
+
+                    current_diff = buffer[-1] - buffer[-2]
+
+                    deviation = 2 * std_diff
+
+                    print(abs(current_diff - avg_diff))
+
+                    if (current_diff < avg_diff and current_diff < avg_diff - deviation) or (current_diff > avg_diff and current_diff > avg_diff + deviation):
+                        if not blink_active:
+                            print("Blink Detected! Liking...")
+                            # Double click center of screen to like
+                            pyautogui.click(like_loc)
+                            blink_active = True
+                    else:
+                        blink_active = False
 
         if results.pose_landmarks:
             # --- START DRAWING SECTION ---
