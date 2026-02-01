@@ -16,7 +16,7 @@ log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 CORS(app)
-stats = {"reps": 0, "time": "00:00"}
+stats = {"reps": 0, "time": "00:00", "camera_angle": "perfect"}
 
 # import like image for finding like coordinates
 
@@ -104,6 +104,30 @@ def find_like():
 
     return like_loc
 
+def get_camera_angle_feedback(left_shoulder_y, right_shoulder_y, face_visible):
+    """
+    Determines if user needs to tilt camera based on shoulder position.
+    Returns: "tilt_back", "tilt_forward", or "perfect"
+
+    Logic:
+    - If shoulders are too high in frame (y < 0.25), user should tilt camera back
+    - If shoulders are too low in frame (y > 0.55), user should tilt camera forward
+    - Otherwise, angle is perfect
+    """
+    if not face_visible:
+        return "face_missing"
+
+    # Average shoulder Y position (0 = top of frame, 1 = bottom of frame)
+    avg_shoulder_y = (left_shoulder_y + right_shoulder_y) / 2
+
+    # Thresholds for camera angle
+    if avg_shoulder_y < 0.10:
+        return "tilt_back"
+    elif avg_shoulder_y > 0.70:
+        return "tilt_forward"
+    else:
+        return "perfect"
+
 def main():
     global stats
 
@@ -120,7 +144,7 @@ def main():
     time.sleep(5)
 
     # find heart locationt o like reels later
-    like_location = pyautogui.locateCenterOnScreen('../assets/like.png', confidence=0.5)
+    like_location = pyautogui.locateCenterOnScreen('../assets/like.png', confidence=0.3)
     can_like = bool(like_location) # if canLike = False, we will have no liking feature
 
 
@@ -168,12 +192,13 @@ def main():
         results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) # for pushup
 
 
+        face_is_visible = bool(face_results.multi_face_landmarks)
+
         # 1. BLINK DETECTION (LIKE REEL)
         if like_loc is not None and face_results.multi_face_landmarks:
             for face_landmarks in face_results.multi_face_landmarks:
                 ear = get_ear(face_landmarks.landmark, LEFT_EYE_TOP_BOTTOM)
 
-                # must append at the start
                 buffer.append(ear)
 
                 # Threshold for a blink (0.015 - 0.02 is typical)
@@ -187,9 +212,9 @@ def main():
 
                     current_diff = buffer[-1] - buffer[-2]
 
-                    deviation = 2.5 * std_diff
+                    deviation = 2 * std_diff
 
-                    print(abs(current_diff - avg_diff))
+                    # print(abs(current_diff - avg_diff))
 
                     if (current_diff < avg_diff and current_diff < avg_diff - deviation) or (current_diff > avg_diff and current_diff > avg_diff + deviation):
                         if not blink_active:
@@ -197,7 +222,6 @@ def main():
                             # Double click center of screen to like
                             pyautogui.click(like_loc)
                             blink_active = True
-                            buffer.pop()
                     else:
                         blink_active = False
 
@@ -239,6 +263,7 @@ def main():
             # 2. Get pixel coordinates for visual dots
             left_shoulder = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
             left_elbow = landmarks[mp_pose.PoseLandmark.LEFT_ELBOW.value]
+            right_shoulder = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
 
             s_pos = (int(left_shoulder.x * w), int(left_shoulder.y * h))
             e_pos = (int(left_elbow.x * w), int(left_elbow.y * h))
@@ -250,6 +275,10 @@ def main():
 
             s_y = left_shoulder.y
             e_y = left_elbow.y
+
+            # Camera Angle Detection
+            camera_feedback = get_camera_angle_feedback(left_shoulder.y, right_shoulder.y, face_is_visible)
+            stats["camera_angle"] = camera_feedback
 
             # Detection Logic (Existing)
             if s_y > (e_y - 0.05):
