@@ -120,7 +120,7 @@ def main():
     time.sleep(5)
 
     # find heart locationt o like reels later
-    like_location = pyautogui.locateCenterOnScreen('../assets/like.png', confidence=0.3)
+    like_location = pyautogui.locateCenterOnScreen('../assets/like.png', confidence=0.5)
     can_like = bool(like_location) # if canLike = False, we will have no liking feature
 
 
@@ -173,6 +173,7 @@ def main():
             for face_landmarks in face_results.multi_face_landmarks:
                 ear = get_ear(face_landmarks.landmark, LEFT_EYE_TOP_BOTTOM)
 
+                # must append at the start
                 buffer.append(ear)
 
                 # Threshold for a blink (0.015 - 0.02 is typical)
@@ -186,7 +187,7 @@ def main():
 
                     current_diff = buffer[-1] - buffer[-2]
 
-                    deviation = 2 * std_diff
+                    deviation = 2.5 * std_diff
 
                     print(abs(current_diff - avg_diff))
 
@@ -196,6 +197,7 @@ def main():
                             # Double click center of screen to like
                             pyautogui.click(like_loc)
                             blink_active = True
+                            buffer.pop()
                     else:
                         blink_active = False
 
