@@ -63,4 +63,3 @@ Navigate to any Instagram Reel at `instagram.com/reels/`. The HUD will appear in
 ## ⚠️ Notes
 - The backend must be running **before** you open Instagram, otherwise the HUD will display `"Start Python Script..."`
 - Make sure your webcam is accessible and unobstructed
-- 
